@@ -21,6 +21,7 @@ git clone https://github.com/shyamshankarhr/fifa-quarto.git
       * MLmetrics
       * xgboost
       * fastDummies
+   (Using install.packages("<package-name>") in R-studio)
 
 3. Install Quarto (if not done already). It is available [here](https://quarto.org/docs/get-started/).
 
