@@ -10,9 +10,17 @@ git clone https://github.com/shyamshankarhr/fifa-quarto.git
 2. Ensure that R is installed. Else, install it from https://cran.r-project.org/
 
    Also ensure that the following r packages are installed:
-	* ABC
-	* XYZ
-
+      * dplyr
+      * tidyverse
+      * corrplot
+      * randomForest
+      * VIM
+      * mice
+      * kableExtra
+      * MASS
+      * MLmetrics
+      * xgboost
+      * fastDummies
 
 3. Install Quarto (if not done already). It is available [here](https://quarto.org/docs/get-started/).
 
