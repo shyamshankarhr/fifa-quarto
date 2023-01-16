@@ -576,10 +576,12 @@ MAPE(predict(model.xgboost, xgb_test), test$wage_eur)*100
 
 Out of all the models we evaluated on the test set; the Random Forest model (after hyperparameter tuning) gave the best MAPE result. The scatter-plot of predicted wage v/s actual wage on unseen data is as shown below:
 ```{r}
+#| label: fig-predactscatter
+#| fig-cap: Scatter-plot of Predicted v/s Actual Wage with Random Forest Model
 ggplot(test, aes(x=predict(model.rf2, test), y=wage_eur)) +
   geom_point() +
   geom_abline(intercept=0, slope=1) +
-  labs(x='Predicted Values', y='Actual Values', title='Predicted vs. Actual Values with Random Forest Model')
+  labs(x='Predicted Wage', y='Actual Wage', title='Predicted vs. Actual Wage with Random Forest Model')
 
 ```
 
