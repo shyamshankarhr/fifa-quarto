@@ -391,7 +391,7 @@ bestmtry <- tuneRF(player_df,player_df$wage_eur,stepFactor = 1.2,
                    improve = 0.01, trace=T, plot= T)
 ```
 
-We see that best mtry value is 7. 
+We see that best mtry value is 8. 
 Using that in the improved Random Forest model:
 
 
@@ -400,7 +400,7 @@ Using that in the improved Random Forest model:
 model.rf2 <- randomForest(wage_eur ~ value_log + age + height_cm + league_name +
                             international_reputation + release_clause_log +
                             contract_left_days + days_at_club, data=player_df, ntree=100,
-                            mtry=7, keep.forest=TRUE, importance=TRUE)
+                            mtry=8, keep.forest=TRUE, importance=TRUE)
 model.rf2
 ```
 
@@ -468,6 +468,7 @@ grid_search_xgb_val <- function(depth, rounds){
   model_xgboost = xgboost(data = xgb_train, max.depth = depth, nrounds = rounds, verbose = 0)
   pred_y = predict(model_xgboost, xgb_val)
   cat(sprintf("Depth:%d   Rounds:%d   MAPE:%f\n", depth, rounds, MAPE(pred_y, val_xgb_y)*100))
+  return(list("depth" = depth, "rounds" = rounds, "mape" = MAPE(pred_y, val_xgb_y)*100))
 }
 
 ```
@@ -475,19 +476,28 @@ grid_search_xgb_val <- function(depth, rounds){
 Performing grid search with various values of max.depth and nrounds:
 ```{r}
 #| code-fold: FALSE
+opt_depth <- 4
+opt_rounds <- 40
+min_mape <- 1000
 for (depth in seq(3,12,by=1)) {
   for (rounds in seq(40,160, by=20)) {
-    grid_search_xgb_val(depth,rounds)
+    result <- grid_search_xgb_val(depth,rounds)
+    if(result$mape < min_mape) {
+      min_mape <- result$mape
+      opt_depth <- result$depth
+      opt_rounds <- result$rounds
+      cat(sprintf("New record:-- Depth:%d   Rounds:%d   MAPE:%f\n", opt_depth, opt_rounds, min_mape))
+    }
   }
 }
 
 ```
 
-From the console output, we see that the minimum MAPE is obtained for max.depth = 7 and nrounds = 40. Thus, we will create an XGBoost model with those hyperparameters:
+From the console output, we see that the minimum MAPE (`r min_mape`) is obtained for max.depth = `r opt_depth` and nrounds = `r opt_rounds`. Thus, we will create an XGBoost model with those hyperparameters:
 
 ```{r}
 #| code-fold: FALSE
-model.xgboost = xgboost(data = xgb_train, max.depth = 7, nrounds = 40, verbose = 0)
+model.xgboost = xgboost(data = xgb_train, max.depth = opt_depth, nrounds = opt_rounds, verbose = 0)
 ```
 
 <br>
@@ -505,7 +515,7 @@ test$release_clause_log <- log(test$release_clause_eur)
 
 To get a minimum performance (baseline) for wage prediction, we can use the mean wage from training dataset, and use that as prediction in the test data.
 
-Mean wage from training data :`r round(mean(player_df$wage_eur), digits=0)`.
+Mean wage from training data :`r format(mean(player_df$wage_eur), scientific=FALSE)`.
 We can calculate the MAPE using the following code:
 
 ```{r}
