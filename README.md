@@ -20,6 +20,10 @@ This may take around 20 minutes to run.
 
 5. The report is generated as FifaWage.html
 
+### Sample Output
+
+A sample output of the analysis is shown [here](https://htmlpreview.github.io/?https://github.com/shyamshankarhr/fifa-quarto/blob/master/sample_output/FifaWage.html). This file is also kept in sample_output folder.
+
 ## Reproducibility
 
-The report is not hard-coded, but generated based on the data files, and analysis results. The generated output file (FifaWage.html) will be similar to html report in sample_output folder (if the R-version is consistent). This shows the ability of Quarto to reproduce dynamic Data Analysis reports.
+The goal of the project is to be able to reproduce the analysis results, using Quarto. The report is not hard-coded but generated based on the data files, and analysis results. The generated output file (FifaWage.html) will be similar to [sample output](https://htmlpreview.github.io/?https://github.com/shyamshankarhr/fifa-quarto/blob/master/sample_output/FifaWage.html) if the R-version is consistent. This shows the ability of Quarto to reproduce dynamic Data Analysis reports.
