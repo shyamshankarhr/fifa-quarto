@@ -20,7 +20,7 @@ csl: apa-single-spaced.csl
 ---
 
 # The Dataset
-![EA SPORTS™ FIFA 22](images/fifa-22.jpg){#fig-fifa22}
+![EA SPORTS FIFA 22](images/fifa-22.jpg){#fig-fifa22}
 
 We will be working with [FIFA 22 complete player dataset](https://www.kaggle.com/datasets/stefanoleone992/fifa-22-complete-player-dataset) from Kaggle. Our focus will be on modelling the dependence of player's wage on attributes like age, reputation, etc. and predict the wage of some players on out-of-sample data. 
 
@@ -39,6 +39,8 @@ set.seed(101)
 
 The library [kableExtra](https://haozhu233.github.io/kableExtra/awesome_table_in_html.html) by Hao Zhu was used to format the table display in HTML.
 ```{r library and data, warning = FALSE, message = FALSE, out.width="100%"}
+install.packages(c('rmarkdown','dplyr', 'tidyverse', 'corrplot', 'randomForest', 'VIM', 'mice', 'kableExtra', 'MASS', 'MLmetrics', 'xgboost', 'fastDummies'), repos = "http://cran.us.r-project.org")
+
 library(dplyr)
 library(tidyverse)
 library(corrplot)
