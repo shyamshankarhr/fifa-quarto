@@ -16,7 +16,7 @@ git clone https://github.com/shyamshankarhr/fifa-quarto.git
 ```
 quarto render FifaWage.qmd --to html
 ```
-This may take around 12 minutes to run.
+This may take around 20 minutes to run.
 
 5. The report is generated as FifaWage.html
 
