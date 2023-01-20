@@ -1,0 +1,684 @@
+---
+title: Quarto Demonstration
+description: Analysis and Prediction of Wage in FIFA 18-22 dataset
+date: today # other options: now, last-modified
+author:
+  - name: Shyam Shankar Hemachandran Rani
+    url: https://www.linkedin.com/in/shyamshankarhr/
+    affiliation: LMU Munich Data Science
+    affiliation-url: https://www.m-datascience.mathematik-informatik-statistik.uni-muenchen.de/index.html
+title-block-banner: true
+format:
+  html:
+    theme: flatly
+    code-fold: true
+    toc: true
+    number-sections: true
+# bibliography: penguins.bib
+link-citations: yes
+csl: apa-single-spaced.csl
+---
+
+
+# The Dataset
+![EA SPORTS FIFA 22](images/fifa-22.jpg){#fig-fifa22}
+
+We will be working with [FIFA 22 complete player dataset](https://www.kaggle.com/datasets/stefanoleone992/fifa-22-complete-player-dataset) from Kaggle. Our focus will be on modelling the dependence of player's wage on attributes like age, reputation, etc. and predict the wage of some players on out-of-sample data. 
+
+:::{.callout-note}
+We will be using the FIFA player dataset from the years 2018 till 2022.
+:::
+
+## Loading Packages & Reading Data
+
+As the first step, we will set a seed. This will ensure reproducibility of the stochastic processes happening in the analysis (like random sampling).
+
+
+```{r}
+#| code-fold: FALSE
+set.seed(101)
+```
+
+
+The library [kableExtra](https://haozhu233.github.io/kableExtra/awesome_table_in_html.html) by Hao Zhu was used to format the table display in HTML.
+
+```{r library and data, warning = FALSE, message = FALSE, out.width="100%"}
+install.packages(c('rmarkdown','dplyr', 'tidyverse', 'corrplot', 'randomForest', 'VIM', 'mice', 'kableExtra', 'MASS', 'MLmetrics', 'xgboost', 'fastDummies'), repos = "http://cran.us.r-project.org")
+
+library(dplyr)
+library(tidyverse)
+library(corrplot)
+library(randomForest)
+library(VIM)
+library(mice)
+library(kableExtra)
+library(MASS)
+library(MLmetrics)
+library(xgboost)
+library(fastDummies)
+
+
+get_yearfile <- function (title_year) {
+  filename <- paste('./data/players_',title_year,'.csv', sep="")
+  df <- read.csv(filename)
+  df["fifa_version"] <- title_year
+  df
+}
+
+df_list <- lapply(c(18:22), get_yearfile)
+player_df <- df_list %>% reduce(bind_rows)
+rm(df_list)
+
+eligible_features <- c('fifa_version',  'value_eur','wage_eur' ,'age',
+                     'height_cm', 'weight_kg', 'league_name',
+                     'club_contract_valid_until', 'club_joined', 'preferred_foot',
+                     'international_reputation',
+                     'work_rate', 'body_type', 'release_clause_eur')
+
+player_df <- player_df[eligible_features]
+head(player_df)  %>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+```
+
+
+<br>
+
+## Data Cleaning
+
+The dataframe has `r nrow(player_df)` rows, comprising players from `r length(unique(unlist(player_df[c("league_name")])))` leagues. We will select the top 7 leagues according to [UEFA rankings](https://sportzpoint.com/football/top-7-football-leagues-by-uefa-rankings/). The following are the top 7 leagues:
+
+* Premier League | England
+* La Liga | Spain
+* Serie A | Italy
+* Bundesliga | Germany
+* Primeira Liga | Portugal
+* Ligue 1 | France
+* Eredivisie | Netharlands
+
+
+```{r}
+top_leagues <- c("English Premier League", "Spain Primera Division", "Italian Serie A",
+                "German 1. Bundesliga", "Portuguese Liga ZON SAGRES", "French Ligue 1",
+                "Holland Eredivisie")
+player_df <- player_df[player_df$league_name %in% top_leagues,]
+
+```
+
+
+# Exploratory Data Analysis
+
+## Missing Data Analysis
+
+We can find out the columns which have missing values, with the code snippet below:
+
+
+```{r}
+#| code-fold: FALSE
+miss_cols <- names(which(colSums(is.na(player_df)) > 0))
+miss_cols
+```
+
+The following columns have missing values: `r miss_cols`
+
+Let's check the count of missing values compared to the total number of rows, in each version of FIFA dataset:
+
+
+```{r}
+#| code-fold: FALSE
+player_df %>% 
+  group_by(fifa_version) %>% 
+    dplyr::summarise(release_clause_na = sum(is.na(release_clause_eur)),
+                     value_na = sum(is.na(value_eur)), row_count=n())
+```
+
+We can visualize the missing values in the following plot:
+
+```{r}
+#| label: fig-missvalues
+#| fig-cap: Visualzation of missing values in the dataset
+#| code-fold: FALSE
+#| results: 'hide'
+aggr_plot <- aggr(player_df, col=c('#0099ff','#ff6699'), numbers=TRUE, sortVars=TRUE,
+                  labels=names(player_df), cex.axis=.5, gap=3,
+                  ylab=c("Histogram of missing data","Pattern"))
+```
+
+
+We will now impute the missing values using the [mice package](https://www.rdocumentation.org/packages/mice/versions/3.15.0/topics/mice) in R
+
+
+```{r}
+#| code-fold: FALSE
+#| results: 'hide'
+#| warning: FALSE
+imputed_data <- mice(player_df,m=3,maxit=10,meth='cart',seed=500)
+```
+
+
+Let's compare the distribution of imputed data and the original data:
+
+```{r}
+#| label: fig-imputeddistr
+#| fig-cap: Distribution of the imputed data v/s original data
+#| code-fold: FALSE
+densityplot(imputed_data)
+```
+
+@fig-imputeddistr shows the distribution of imputed data (red) over the distribution of the original data (blue). We see that they follow similar distributions. So, the imputation of our missing values hasn't adversely affected our data distribution.
+
+So we replace the missing values with the imputed values:
+
+```{r}
+#| code-fold: FALSE
+player_df <- complete(imputed_data, 1)
+```
+
+
+
+# Feature Engineering
+
+## Creating New Features
+Based on the FIFA version, club_joined date and club_contract_valid_until date, we can create the following 2 features: **_contract_left_days_** and **_days_at_club_**
+
+
+```{r}
+player_df$fifa_version <- paste('20', player_df$fifa_version, sep="")
+player_df$fifa_version <- as.Date(ISOdate(player_df$fifa_version, 1, 1))
+
+player_df <- player_df[player_df$club_joined!="",]  # since some blank values were found
+
+player_df$club_joined <- as.Date(ISOdate(player_df$club_joined, 1, 1))
+player_df$club_contract_valid_until <- as.Date(ISOdate(player_df$club_contract_valid_until, 1, 1))
+
+player_df$contract_left_days <- as.numeric(player_df$club_contract_valid_until - player_df$fifa_version)
+player_df$days_at_club <- as.numeric(player_df$fifa_version - player_df$club_joined)
+
+head(player_df[,c("fifa_version", "club_joined", "club_contract_valid_until", "contract_left_days", "days_at_club")])  %>%
+  kbl() %>%
+  kable_material(c("striped", "hover"))
+
+player_df <- subset(player_df, select = -c(fifa_version, club_contract_valid_until, club_joined))
+
+```
+
+
+## Transforming Features
+The features: body_type and work_rate have string values with mixed types. That can be formatted to generate cleaner categories:
+
+```{r}
+#| code-fold: FALSE
+player_df$work_rate <- str_extract(player_df$work_rate, "\\w+")
+player_df$body_type <- str_extract(player_df$body_type, "\\w+")
+```
+
+
+The features of the data have the following types now:
+
+```{r}
+str(player_df)
+```
+
+
+The features: league_name, preferred_foot, work_rate, body_type and international_reputation can be *converted to categorical type* to facilitate model fitting.
+
+
+```{r}
+player_df$league_name <- as.factor(player_df$league_name)
+player_df$preferred_foot <- as.factor(player_df$preferred_foot)
+player_df$work_rate <- as.factor(player_df$work_rate)
+player_df$body_type <- as.factor(player_df$body_type)
+player_df$international_reputation <- as.factor(player_df$international_reputation)
+
+```
+
+
+## Train-Test Split
+Now the data is ready for splitting into training (including validation) and testing datasets. The test dataset will be utilized later, after designing the models, for predicting the wage on out-of-sample data.
+
+We will select 80% of the data for training, and keep 20% as unseen data for prediction.
+
+
+```{r}
+sample <- sample.int(n = nrow(player_df), size = floor(.80*nrow(player_df)), replace = F)
+train <- player_df[sample, ]
+test  <- player_df[-sample, ]
+
+player_df <- train  # renaming the dataframe
+```
+
+
+# Fitting Regression Models
+Now we will model the dependence of Wage on other covariates. The models will be used to make prediction on the unseen data later.
+
+## Linear Model
+
+
+```{css, echo=FALSE}
+.main-container {
+    max-width: 600px !important;
+}
+
+pre {
+  max-height: 500px !important;
+  overflow-y: auto !important;
+  overflow-x: scroll !important;
+}
+pre code {
+  white-space: pre
+}
+```
+
+```{r}
+#| code-fold: FALSE
+model.lm1 <- lm(wage_eur ~ ., data=player_df)
+model.lm1.summ <- summary(model.lm1)
+model.lm1.summ
+```
+
+We see that the features: weight_kg, preferred_foot, work_rate and body_type have low signficance in modelling the wage.
+
+So, let's try a linear model without these factors:
+
+```{r}
+#| code-fold: FALSE
+model.lm2 <- lm(wage_eur ~ value_eur + age + height_cm + league_name +
+                  international_reputation + release_clause_eur +
+                  contract_left_days + days_at_club, data = player_df)
+model.lm2.summ <- summary(model.lm2)
+model.lm2.summ
+```
+
+We see that the F-statistic has `r if(model.lm2.summ$fstatistic[1] > model.lm1.summ$fstatistic[1]){"improved"} else {"reduced"}` from `r round(model.lm1.summ$fstatistic[1], digits=0)` to `r round(model.lm2.summ$fstatistic[1], digits=0)`, while Adjusted R-squared `r if(model.lm2.summ$adj.r.squared > model.lm1.summ$adj.r.squared){"increased"} else {"reduced"}` from `r round(model.lm1.summ$adj.r.squared, digits=4)` to `r round(model.lm2.summ$adj.r.squared, digits=4)`. 
+
+`r if(((model.lm2.summ$fstatistic[1] - model.lm1.summ$fstatistic[1]) > 50) & ((model.lm2.summ$adj.r.squared - model.lm1.summ$adj.r.squared) > -0.005)){"We see that the F-statistic has improved substantially, without much reduction in Adjusted R-squared value. So the model got better."} else {"We don't see substantial improvement in the model results."}`
+
+## Generalized Linear Models
+
+Since we are working with currency data (wage, value and release_clause), we cannot assume a normal distribution of the covariates (since they are non-negative and dense at low values). Let us plot the univariate distributions:
+
+
+```{r}
+#| echo: FALSE
+par(mfrow=c(2,2))
+plot(density(player_df$wage_eur), main="Wage (Eur)", col='#14c27f')
+plot(density(player_df$value_eur), main="Value (Eur)", col='#14c27f')
+plot(density(player_df$release_clause_eur), main="Release Clause(Eur)", col='#14c27f')
+plot(density(player_df$age), main="Age", col='#14c27f')
+plot(density(player_df$weight_kg), main="Weight (kg)", col='#14c27f')
+plot(density(player_df$height_cm), main="Height (cm)", col='#14c27f')
+plot(density(player_df$contract_left_days), main="Contract Left Days", col='#14c27f')
+plot(density(player_df$days_at_club), main="Days at Club", col='#14c27f')
+```
+
+We can see that the currency variables (wage_eur, value_eur and release_clause_eur) are highly positively skewed, and far from normally distributed. Thus we should view them in a log-scale. The distribution after log transformation are shown below:
+
+### Log transformed variables
+
+
+```{r}
+#| code-fold: FALSE
+player_df$wage_log <- log(player_df$wage_eur)
+player_df$value_log <- log(player_df$value_eur)
+player_df$release_clause_log <- log(player_df$release_clause_eur)
+```
+
+```{r}
+#| echo: FALSE
+par(mfrow=c(2,2))
+plot(density(player_df$wage_log), main="Wage (Eur)", col='#da0b5e')
+plot(density(player_df$value_log), main="Value (Eur)", col='#da0b5e')
+plot(density(player_df$release_clause_log), main="Release Clause(Eur)", col='#da0b5e')
+```
+
+We can see that the positive skewness has been damped, and the log transformed variables are approximately gaussian. 
+
+### Gamma Distributed Response
+
+If we log-transform the response variable (Wage), we will no longer be able to compare the model to the previous linear models where non-transformed Wage was used. It will also introduce extra bias due to nonlinear back-transformation with exponential function. Thus, we will keep the response variable in the original form, and rather fit a GLM with a family corresponding to its distribution.
+
+<br>
+
+
+```{r}
+#| label: fig-wagegamma
+#| fig-cap: Distribution of Wage, fitted with a Gamma density function
+#| fig-align: 'left'
+
+k_wage <- player_df$wage_eur/1000
+
+ggplot(player_df, aes(x=k_wage)) + 
+  stat_density(colour="#ff6699", geom="line", position="identity", size=1) +
+  stat_function(color="#0099ff", fun=dgamma, args=list(shape=mean(k_wage)^2 / sd(k_wage)^2, scale=sd(k_wage)^2 / mean(k_wage)), size=1) +
+  labs(title="Gamma distribution of Wage",
+        x ="Wage (in 1000 Eur)", y = "Density")
+```
+
+Thus, we will fit a GLM with Gamma family, and with a log-link.
+
+
+```{r}
+
+model.glm1 <- glm(wage_eur ~ value_log + age + height_cm + league_name + 
+                  international_reputation + release_clause_log + 
+                  contract_left_days + days_at_club, data = player_df,
+                  family = Gamma(link="log"))
+model.glm1
+
+```
+
+If we compare the AIC of the GLM with the previous Linear Model, we see: <br>
+
+* AIC of GLM (with Gamma family and log link) : `r format(AIC(model.glm1), scientific=FALSE)` <br>
+* AIC of Linear Model 2 : `r format(AIC(model.lm2), scientific=FALSE)`
+
+`r if(AIC(model.lm2) > AIC(model.glm1)){"Thus, the GLM has given a better result (lower AIC)."}`
+
+
+### AIC-based step function for variable selection
+
+We can see if the variables we initially omitted after linear model, may be added to the GLM, to reduce the AIC even further. We will start off with only value_log as predictor, and keep adding / removing covariates that reduce AIC.
+
+
+```{r}
+
+model.glm1.step <- step(glm(wage_eur ~ value_log, data=player_df, family = Gamma(link="log")),
+                        scope = wage_eur ~ value_log + age + weight_kg + height_cm +
+                          days_at_club + contract_left_days + preferred_foot + 
+                          international_reputation + work_rate + body_type + release_clause_log +
+                          league_name,
+                        direction = "both") 
+
+```
+
+
+In the final model, only preferred_foot is the omitted variable. We include all other features in the GLM. Thus we form the next GLM:
+
+
+```{r}
+model.glm2 <- glm(wage_eur ~ value_log + age + height_cm + league_name + 
+                    international_reputation + release_clause_log + 
+                    contract_left_days + days_at_club + weight_kg +
+                    work_rate + body_type, data = player_df,
+                  family = Gamma(link="log"))
+model.glm2
+
+
+```
+
+
+<br>
+
+## Random Forest Model
+
+<!-- ![img src: www.frontiersin.org/articles/10.3389/fnagi.2017.00329/full](images/random-forest.jpg){#fig-fifa22} -->
+
+In the next stage, we will try to fit a random forest regression model for Wage analysis.
+The code is as follows:
+
+```{r}
+#| code-fold: FALSE
+model.rf1 <- randomForest(wage_eur ~ value_log + age + height_cm + league_name +
+                            international_reputation + release_clause_log +
+                            contract_left_days + days_at_club, data=player_df, ntree=100,
+                          keep.forest=TRUE, importance=TRUE)
+model.rf1
+```
+
+<!-- We see that this model explains 87.48% of the variance, which indicates good performance. -->
+
+### Hyperparameter Optimization of Random Forest Model
+One main hyperparameter we can tune in the Random Forest Model is mtry: the number of variables to randomly sample as candidates at each split. By default, it is set as p/3 where p is the number of features used in the model. 
+
+The best value of mtry can be found by finding the mtry corresponding to the minimum of OOB Error, using the code below:
+
+```{r}
+#| label: fig-rftuner
+#| fig-cap: Random Forest tuning for best mtry value
+#| code-fold: FALSE
+bestmtry <- tuneRF(player_df,player_df$wage_eur,stepFactor = 1.2,
+                   improve = 0.01, trace=T, plot= T)
+```
+
+
+We see that best mtry value is 8. 
+Using that in the improved Random Forest model:
+
+
+
+```{r}
+#| code-fold: FALSE
+model.rf2 <- randomForest(wage_eur ~ value_log + age + height_cm + league_name +
+                            international_reputation + release_clause_log +
+                            contract_left_days + days_at_club, data=player_df, ntree=100,
+                            mtry=8, keep.forest=TRUE, importance=TRUE)
+model.rf2
+```
+
+
+### Visualizing variable importance
+
+The importance of variables used in the random forest model is visualized below:
+
+```{r}
+#| label: fig-featureimp
+#| fig-cap: Variable importance
+ImpData <- as.data.frame(importance(model.rf2))
+ImpData$Var.Names <- row.names(ImpData)
+
+ggplot(ImpData, aes(x=Var.Names, y=`%IncMSE`)) +
+  geom_segment( aes(x=Var.Names, xend=Var.Names, y=0, yend=`%IncMSE`), color="skyblue") +
+  geom_point(aes(size = IncNodePurity), color="blue", alpha=0.6) +
+  theme_light() +
+  coord_flip() +
+  theme(
+    legend.position="bottom",
+    panel.grid.major.y = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.y = element_blank()
+  )
+
+```
+
+Here we see 2 different metrics for assessing Variable Importance:
+
+* *%IncMSE* : Increase in MSE of predictions when the variable is permuted 
+* *IncNodePurity* : Average increase in node purity on splitting using the variable
+
+%IncMSE is the more relevant metric, and we see that league_name plays most important role in the wage : permutations (shuffling) of the league_name can result in highest changes of Wage. That is followed by the international_reputation.
+
+## XGBoost Model
+
+Next we use XGBoost (eXtreme Gradient Boosting) algorithm to design a model for Wage prediction. We will tune the parameters: max.depth and nrounds of the gradient boosting algorithm using grid search, and evaluating MAPE on a validation dataset. The model with best parameter choices are selected for evaluating on the test set later.
+
+We convert the categorical variables to dummy variables since the XGBoost model requires a data matrix with numerical features. This is achieved with the following code:
+
+
+```{r}
+#| code-fold: FALSE
+dummy_player_df <- dummy_cols(player_df, select_columns = c('league_name', 'international_reputation', 'work_rate', 'body_type', 'preferred_foot'),
+                              remove_selected_columns = TRUE)
+```
+
+
+Now we keep aside a portion of the data for validation, and generate data matrices for XGBoost:
+
+```{r}
+sample <- sample.int(n = nrow(dummy_player_df), size = floor(.80*nrow(dummy_player_df)), replace = F)
+train_xgb <- dummy_player_df[sample, ]
+val_xgb  <- dummy_player_df[-sample, ]
+
+train_xgb_x <- data.matrix(train_xgb[, -which(names(train_xgb) %in% c('value_eur', 'wage_eur', 'wage_log', 'release_clause_eur'))])
+train_xgb_y <- train_xgb$wage_eur
+
+val_xgb_x <- data.matrix(val_xgb[, -which(names(val_xgb) %in% c('value_eur', 'wage_eur', 'wage_log', 'release_clause_eur'))])
+val_xgb_y <- val_xgb$wage_eur
+
+xgb_train = xgb.DMatrix(data = train_xgb_x, label = train_xgb_y)
+xgb_val = xgb.DMatrix(data = val_xgb_x, label = val_xgb_y)
+```
+
+To tune the max.depth and nrounds parameters of thr XGBoost model, we create a function: grid_search_xgb_val to display the MAPE for a particular (max.depth, nrounds) input:
+
+
+```{r}
+#| code-fold: FALSE
+grid_search_xgb_val <- function(depth, rounds){
+  model_xgboost = xgboost(data = xgb_train, max.depth = depth, nrounds = rounds, verbose = 0)
+  pred_y = predict(model_xgboost, xgb_val)
+  cat(sprintf("Depth:%d   Rounds:%d   MAPE:%f\n", depth, rounds, MAPE(pred_y, val_xgb_y)*100))
+  return(list("depth" = depth, "rounds" = rounds, "mape" = MAPE(pred_y, val_xgb_y)*100))
+}
+
+```
+
+
+Performing grid search with various values of max.depth and nrounds:
+
+```{r}
+#| code-fold: FALSE
+opt_depth <- 4
+opt_rounds <- 40
+min_mape <- 1000
+for (depth in seq(3,12,by=1)) {
+  for (rounds in seq(40,160, by=20)) {
+    result <- grid_search_xgb_val(depth,rounds)
+    if(result$mape < min_mape) {
+      min_mape <- result$mape
+      opt_depth <- result$depth
+      opt_rounds <- result$rounds
+      cat(sprintf("New record:-- Depth:%d   Rounds:%d   MAPE:%f\n", opt_depth, opt_rounds, min_mape))
+    }
+  }
+}
+
+```
+
+
+From the console output, we see that the minimum MAPE (`r min_mape`) is obtained for max.depth = `r opt_depth` and nrounds = `r opt_rounds`. Thus, we will create an XGBoost model with those hyperparameters:
+
+
+```{r}
+#| code-fold: FALSE
+model.xgboost = xgboost(data = xgb_train, max.depth = opt_depth, nrounds = opt_rounds, verbose = 0)
+```
+
+
+<br>
+
+# Wage Prediction
+Using the models we have created, we will predict the Wage on unseen data (unseen during model fitting), and compare MAPE: The Mean Absolute Percentage Error.
+
+
+```{r}
+test$wage_log <- log(test$wage_eur)
+test$value_log <- log(test$value_eur)
+test$release_clause_log <- log(test$release_clause_eur)
+```
+
+
+## Baseline Model Prediction
+
+To get a minimum performance (baseline) for wage prediction, we can use the mean wage from training dataset, and use that as prediction in the test data.
+
+Mean wage from training data :`r format(mean(player_df$wage_eur), scientific=FALSE)`.
+We can calculate the MAPE using the following code:
+
+
+```{r}
+#| code-fold: FALSE
+MAPE(mean(player_df$wage_eur), test$wage_eur)*100
+```
+
+Thus, the baseline MAPE is `r round(MAPE(mean(player_df$wage_eur), test$wage_eur)*100, digits=3)`. Any model we propose should have MAPE less than this, to be considered useful.
+
+## Linear Models Prediction
+Using the first linear model (where we used all covariates), we obtain the following MAPE:
+
+```{r}
+#| code-fold: FALSE
+MAPE(predict(model.lm1, test), test$wage_eur)*100
+```
+
+Using the second linear model (with only significant features selected), we obtain the following MAPE:
+
+```{r}
+#| code-fold: FALSE
+MAPE(predict(model.lm2, test), test$wage_eur)*100
+```
+
+
+`r if((MAPE(predict(model.lm1, test), test$wage_eur) > 0.8) & (MAPE(predict(model.lm2, test), test$wage_eur) > 0.8)){"We see that both linear models have more than 80% MAPE. That is not a very good performance."}`
+
+## Generalized Linear Models Prediction
+
+Using the first glm (without AIC-based feature selection), we get the following MAPE:
+
+```{r}
+#| code-fold: FALSE
+MAPE(predict(model.glm1, test, type = "response"), test$wage_eur)*100
+```
+
+
+Using the second glm (with AIC-based feature selection), we get the following MAPE:
+
+```{r}
+#| code-fold: FALSE
+MAPE(predict(model.glm2, test, type = "response"), test$wage_eur)*100
+```
+
+We see a drastic improvement in performance using the GLM model, since it used Gamma distribution to model the Wage, with a log-link. This indeed helped in improving the model.
+
+## Random Forest Model Prediction
+ 
+Using the first random forest model (without hyperparameter optimization), we get the following MAPE:
+
+```{r}
+#| code-fold: FALSE
+MAPE(predict(model.rf1, test), test$wage_eur)*100
+```
+
+Using the random forest model after hyperparameter optimization, we get the following MAPE:
+
+```{r}
+#| code-fold: FALSE
+MAPE(predict(model.rf2, test), test$wage_eur)*100
+```
+
+
+## XGBoost Model Prediction
+We create dummy variables for categorical features in the test dataset, to be able to use the XGBoost model.
+
+
+```{r}
+dummy_test <- dummy_cols(test, select_columns = c('league_name', 'international_reputation', 'work_rate', 'body_type', 'preferred_foot'),
+                              remove_selected_columns = TRUE)
+
+test_x <- data.matrix(dummy_test[, -which(names(dummy_test) %in% c('value_eur', 'wage_eur', 'wage_log', 'release_clause_eur'))])
+test_y <- test$wage_eur
+xgb_test = xgb.DMatrix(data = test_x, label = test_y)
+
+```
+
+Using the XGBoost model for wage prediction, we get the following MAPE:
+
+```{r}
+#| code-fold: FALSE
+MAPE(predict(model.xgboost, xgb_test), test$wage_eur)*100
+```
+
+
+## Conclusion
+
+Out of all the models we evaluated on the test set; the Random Forest model (after hyperparameter tuning) gave the best MAPE result. The scatter-plot of predicted wage v/s actual wage on unseen data is as shown below:
+
+```{r}
+#| label: fig-predactscatter
+#| fig-cap: Scatter-plot of Predicted v/s Actual Wage with Random Forest Model
+ggplot(test, aes(x=predict(model.rf2, test), y=wage_eur)) +
+  geom_point() +
+  geom_abline(intercept=0, slope=1) +
+  labs(x='Predicted Wage', y='Actual Wage', title='Predicted vs. Actual Wage with Random Forest Model')
+
+```
+

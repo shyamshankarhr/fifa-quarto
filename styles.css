@@ -1,0 +1,47 @@
+.titlepage-quarto {
+  display: block;
+  text-align: center;
+  text-transform: uppercase;
+  font-size: 8rem;
+  margin-bottom: 100px;
+  letter-spacing: 8px;
+  animation: textBounceStretch 4s infinite;
+  position: relative;
+}
+@keyframes textBounceStretch {
+  0% {
+    letter-spacing: 8px;
+  }
+  30% {
+    letter-spacing: 25px;
+    text-shadow: 8px 8px 16px steelblue;
+  }
+  85% {
+    letter-spacing: 8px;
+  }
+}
+
+
+.innerpage-quarto {
+  background-image: 
+    linear-gradient(to right, cornflowerblue, dodgerblue, darkslateblue, indigo, darkviolet, indigo, darkslateblue, dodgerblue); 
+  -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;  
+  animation: rainbow-animation 200s linear infinite;
+}
+
+@keyframes rainbow-animation {
+    to {
+        background-position: 4500vh;
+    }
+}
+
+
+.small-size-1{
+  font-size: 1rem;
+}
+
+
+.small-size-2{
+  font-size: 2rem;
+}
